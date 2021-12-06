@@ -2,6 +2,8 @@
 Aleo scripts
 
 ```
+apt install pssh # required for restart_miner.sh, confirmed_blocks.sh
+
 pip install -r requirements.txt
 
 echo 'ssh-alias-01;ipaddr-01' >> hosts.txt
