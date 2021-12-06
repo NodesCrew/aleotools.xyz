@@ -1,0 +1,1 @@
+pssh -i -h .hosts "journalctl -u aleod-miner -o cat | grep 'confirmed_' | grep -v 'confirmed_blocks = 0' | tail -n 1"
