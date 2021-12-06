@@ -19,9 +19,11 @@ def read_hosts():
 
 async def get_network_info():
     async with aiohttp.ClientSession() as http:
-        r = await http.get("https://www.aleo.network/api/latestblocks?limit=1")
+        r = await http.get("https://www.aleo.network/api/latestBlocks?limit=1")
         data = await r.json()
-    return dict(height=data[0]["height"], timestamp=data[0]["timestamp"])
+    return dict(height=data[0]["height"],
+                timestamp=data[0]["timestamp"],
+                block_hash=data[0]["blockHash"])
 
 
 async def call_rpc(params, host, http):
@@ -44,20 +46,27 @@ async def call_rpc(params, host, http):
     try:
         json_ = json.loads(await response.text())
         return json_["result"]
+    except KeyError:
+        return None
     except Exception as e:
         print("Unable to parse response: status=%s, text=%s\n%s" % (
             response.status_code, response.text, e))
         exit(-1)
 
+
     print("Unable to call: %s" % {{**payload, **params}})
     exit(-1)
 
 
-async def get_host_info(host):
+async def get_host_info(host, net_height):
     async with aiohttp.ClientSession() as http:
         state = await call_rpc({"method": "getnodestate"}, host, http)
         height = await call_rpc({"method": "latestblockheight"}, host, http)
         peers_conn = await call_rpc({"method": "getconnectedpeers"}, host, http)
+        block_hash = await call_rpc(
+            {"method": "getblockhash", "params": [net_height]},
+            host=host, http=http
+        )
 
     try:
         status = state["status"]
@@ -70,43 +79,33 @@ async def get_host_info(host):
         peers_conn=peers_conn or "?",
         peers_sync=peers_sync,
         status=status,
-        height=height or "_____"
+        height=height or "_____",
+        block_hash=block_hash
     )
 
 
 async def main():
     hosts = read_hosts()
 
-    tasks = [get_host_info(h) for h in hosts]
+    network_info = await get_network_info()
+    print("=" * 75)
+    print("Network height: %d (%d sec ago), block hash: %s" % (
+        network_info["height"],
+        (time.time() - 3600) - network_info["timestamp"],
+        network_info["block_hash"]
+    ))
+
+    tasks = [get_host_info(h, network_info["height"]) for h in hosts]
     info = await asyncio.gather(*tasks)
 
-    # network_info = await get_network_info()
-    # print("=" * 75)
-    #
-    # print("Network height: %d, %d seconds ago" % (
-    #     network_info["height"], (time.time() - 3600) - network_info["timestamp"]
-    # ))
-
     table = []
-    hash_list = []
-    hash_tasks = []
-    height_min = 999999999
-
-    # Get min height
-    for idx, host in enumerate(hosts):
-        height_min = min(info[idx]["height"], height_min)
-
-    # Get heights
-    async with aiohttp.ClientSession() as http:
-        for idx, host in enumerate(hosts):
-            hash_tasks.append(
-                call_rpc(
-                    {"method": "getblockhash", "params": [height_min]},
-                    host=host, http=http
-                ))
-        hash_list = await asyncio.gather(*hash_tasks)
 
     for idx, host in enumerate(hosts):
+
+        hash_str = "%s" % info[idx]["block_hash"]
+        if info[idx]["block_hash"] != network_info["block_hash"]:
+            hash_str += " !!!"
+
         table.append([
             host,
             hosts[host],
@@ -114,7 +113,7 @@ async def main():
             info[idx]["height"],
             info[idx]["peers_sync"],
             len(info[idx]["peers_conn"]),
-            hash_list[idx]
+            hash_str
         ])
 
     print(tabulate(table, showindex="always", tablefmt="pretty",
@@ -126,7 +125,7 @@ async def main():
                        "Height",
                        "Psynced",
                        "Ptotal",
-                       "Hash @ %d" % height_min
+                       "Hash @ %d" % network_info["height"]
                    ]
     ))
 
