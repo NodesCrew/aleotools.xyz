@@ -1,4 +1,5 @@
 # coding: utf-8
+
 import json
 import time
 import aiohttp
@@ -12,8 +13,8 @@ def read_hosts():
     with open("hosts.txt") as f:
         for line in f:
             line = line.strip()
-            name, addr = line.split(";")
-            hosts[addr] = name
+            name, addr, aleo = line.split(";")
+            hosts[addr] = [name, aleo]
     return hosts
 
 
@@ -24,6 +25,31 @@ async def get_network_info():
     return dict(height=data[0]["height"],
                 timestamp=data[0]["timestamp"],
                 block_hash=data[0]["blockHash"])
+
+
+async def get_leaderboard_info(aleo_addr):
+    async with aiohttp.ClientSession() as http:
+        r = await http.get(
+            "https://www.aleo.network/api/leaderboard?search=%s" % aleo_addr)
+        data = await r.json()
+
+    result = {
+        "position": 0,
+        "last_mined": 0,
+        "pre_mined": 0,
+        "testnet_mined": 0,
+    }
+
+    try:
+        stat = data["leaderboard"][0]
+    except IndexError:
+        return result
+
+    result["position"] = stat["position"]
+    result["last_mined"] = stat["lastBlockMined"]
+    result["pre_mined"] = stat["calibrationScore"]
+    result["testnet_mined"] = stat["score"]
+    return result
 
 
 async def call_rpc(params, host, http):
@@ -52,7 +78,6 @@ async def call_rpc(params, host, http):
         print("Unable to parse response: status=%s, text=%s\n%s" % (
             response.status_code, response.text, e))
         exit(-1)
-
 
     print("Unable to call: %s" % {{**payload, **params}})
     exit(-1)
@@ -98,21 +123,42 @@ async def main():
     tasks = [get_host_info(h, network_info["height"]) for h in hosts]
     info = await asyncio.gather(*tasks)
 
+    lb_tasks = []
+    lb_stat = dict()
+    for idx, ipaddr in enumerate(hosts):
+        (ssh_alias, aleo_addr) = hosts[ipaddr]
+        lb_tasks.append(get_leaderboard_info(aleo_addr))
+
+    lb_results = await asyncio.gather(*lb_tasks)
+    for idx, ipaddr in enumerate(hosts):
+        (ssh_alias, aleo_addr) = hosts[ipaddr]
+        lb_stat[ipaddr] = lb_results[idx]
+
     table = []
+    forked = []
 
     for idx, host in enumerate(hosts):
-
-        hash_str = "%s" % info[idx]["block_hash"]
         if info[idx]["block_hash"] != network_info["block_hash"]:
-            hash_str += " !!!"
+            hash_str = "FORK [%s]" % str(info[idx]["block_hash"])[-5:]
+            forked.append(hosts[host][0])
+        else:
+            hash_str = "OK"
+
+        lb_str = "%3d [%d + %d]" % (
+            lb_stat[host]["position"],
+            lb_stat[host]["pre_mined"],
+            lb_stat[host]["testnet_mined"],
+        )
 
         table.append([
             host,
-            hosts[host],
+            hosts[host][0],
+            hosts[host][1],
             info[idx]["status"],
             info[idx]["height"],
             info[idx]["peers_sync"],
             len(info[idx]["peers_conn"]),
+            lb_str,
             hash_str
         ])
 
@@ -121,15 +167,23 @@ async def main():
                    headers=[
                        "IPAddr",
                        "Alias",
+                       "Addr",
                        "Status",
                        "Height",
                        "Psynced",
                        "Ptotal",
+                       "Leaderboard",
                        "Hash @ %d" % network_info["height"]
                    ]
     ))
 
     print("=" * 75)
+
+    if forked:
+        with open("restart.hosts", "w+") as w:
+            for ssh_alias in forked:
+                w.write("%s\n" % ssh_alias)
+        print("%d forked hosts found. Generated restart.hosts" % len(forked))
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()

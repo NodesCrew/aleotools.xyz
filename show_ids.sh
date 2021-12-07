@@ -1,0 +1,1 @@
+pssh -i -h .hosts 'grep "\-\-miner aleo" /etc/systemd/system/aleod-miner.service'
