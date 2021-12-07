@@ -2,7 +2,7 @@
 Aleo scripts
 
 ```
-apt install pssh # required for restart_miner.sh, confirmed_blocks.sh
+apt install pssh # required for show_ids.sh, restart_miner.sh, confirmed_blocks.sh
 
 pip install -r requirements.txt
 
